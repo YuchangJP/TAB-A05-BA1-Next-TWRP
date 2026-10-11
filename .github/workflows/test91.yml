@@ -1,4 +1,4 @@
-name: Replace-boot-only
+name: Replace-boot-and-system
 
 on:
   push:
@@ -148,10 +148,32 @@ jobs:
       - name: Create working directories
         run: mkdir -p signed keys
 
+      # ============================================================
+      # ここから下が「署名と再構築」セクション
+      #   - boot.img   : NONE / sha256 / partition_size=33554432
+      #   - system.img : NONE / sha1  / fec_roots=2 / partition_size=2684354560
+      #   - vbmeta.img : SHA256_RSA2048 (AOSP testkey) で再構築
+      # ============================================================
 
       - name: info boot
         run: |
          python avb/avbtool info_image --image boot.img
+
+      - name: info system
+        run: |
+         python avb/avbtool info_image --image system.img
+
+      - name: info vendor
+        run: |
+         python avb/avbtool info_image --image vendor.img
+
+      - name: info dtbo
+        run: |
+         python avb/avbtool info_image --image dtbo.img
+
+      - name: info recovery
+        run: |
+         python avb/avbtool info_image --image recovery.img
 
       - name: info vbmeta
         run: |
@@ -171,15 +193,19 @@ jobs:
           python -m pip uninstall -y pycryptodome || true
           python -m pip install "pycrypto==2.6.1"
 
-      - name: Set fixed salt for boot partition (original boot salt)
-        run: echo "BOOT_SALT=5fb2cc12e4c24f4da2b374b90b1af1ff3ce487dd4afc9fa0e32423d35811a003" >> $GITHUB_ENV
+      - name: Set fixed salt (matches original system/boot)
+        run: echo "FIXED_SALT=5fb2cc12e4c24f4da2b374b90b1af1ff3ce487dd4afc9fa0e32423d35811a003" >> $GITHUB_ENV
 
-      - name: Capture original boot partition size
+      - name: Set original partition sizes (hard-coded)
         run: |
-          cd $GITHUB_WORKSPACE
-          echo "BOOT_PARTITION_SIZE=$(stat -c%s boot.img)" >> $GITHUB_ENV
+          echo "BOOT_PARTITION_SIZE=33554432"   >> $GITHUB_ENV
+          echo "SYSTEM_PARTITION_SIZE=2684354560" >> $GITHUB_ENV
 
-      - name: Sign boot.img => signed/boot.img (NONE, sha256, fixed salt)
+      # ------------------------------------------------------------------
+      # boot.img への再署名
+      #   元の boot は Algorithm=NONE / sha256 / partition_size=33554432
+      # ------------------------------------------------------------------
+      - name: Sign boot.img => signed/boot.img (NONE / sha256 / 33554432)
         run: |
           cd $GITHUB_WORKSPACE
           cp boot.img signed/boot.img
@@ -190,9 +216,61 @@ jobs:
             --partition_size $BOOT_PARTITION_SIZE \
             --hash_algorithm sha256 \
             --algorithm NONE \
-            --salt $BOOT_SALT
+            --salt $FIXED_SALT
 
-      - name: Build vbmeta image (boot descriptor only updated)
+      - name: Verify signed boot.img size
+        run: |
+          cd $GITHUB_WORKSPACE
+          ACTUAL=$(stat -c%s signed/boot.img)
+          echo "signed/boot.img size: $ACTUAL (expected: 33554432)"
+          if [ "$ACTUAL" != "33554432" ]; then
+            echo "ERROR: boot.img size mismatch!"
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------
+      # system.img への再署名
+      #   元の system は Algorithm=NONE / sha1 / fec_roots=2
+      #   partition_size=2684354560 で元と同一サイズに強制
+      # ------------------------------------------------------------------
+      - name: Sign system.img => signed/system.img (NONE / sha1 / fec 2 / 2684354560)
+        run: |
+          cd $GITHUB_WORKSPACE
+          export HOST_OUT=${{ steps.pwd.outputs.workspace-folder }}/out/host/linux-x86
+          export LD_LIBRARY_PATH="$HOST_OUT/lib64:$HOST_OUT/lib:${LD_LIBRARY_PATH}"
+          export PATH="$HOST_OUT/bin:/usr/local/bin:${PATH}"
+          cp system.img signed/system.img
+          python $GITHUB_WORKSPACE/avb/avbtool erase_footer --image signed/system.img 2>/dev/null || true
+          python $GITHUB_WORKSPACE/avb/avbtool add_hashtree_footer \
+            --image signed/system.img \
+            --partition_name system \
+            --setup_as_rootfs_from_kernel \
+            --partition_size $SYSTEM_PARTITION_SIZE \
+            --hash_algorithm sha1 \
+            --fec_num_roots 2 \
+            --algorithm NONE \
+            --salt $FIXED_SALT
+
+      - name: Verify signed system.img size (must be 2684354560)
+        run: |
+          cd $GITHUB_WORKSPACE
+          ACTUAL=$(stat -c%s signed/system.img)
+          echo "signed/system.img size: $ACTUAL (expected: 2684354560)"
+          if [ "$ACTUAL" != "2684354560" ]; then
+            echo "ERROR: system.img size mismatch!"
+            exit 1
+          fi
+
+      - name: Show signed system info
+        run: python avb/avbtool info_image --image signed/system.img
+
+      # ------------------------------------------------------------------
+      # vbmeta.img の再構築
+      #   元 vbmeta と同じく全 descriptor をインラインで格納する構成
+      #   - boot / system  : 署名済みイメージから descriptor を取り込む
+      #   - vendor/dtbo/recovery : 元イメージから descriptor を取り込む
+      # ------------------------------------------------------------------
+      - name: Build vbmeta image (all descriptors inline)
         run: |
           cd $GITHUB_WORKSPACE
           python $GITHUB_WORKSPACE/avb/avbtool make_vbmeta_image \
@@ -200,10 +278,10 @@ jobs:
             --key keys/vbmeta.pem \
             --algorithm SHA256_RSA2048 \
             --include_descriptors_from_image signed/boot.img \
+            --include_descriptors_from_image signed/system.img \
             --include_descriptors_from_image vendor.img \
             --include_descriptors_from_image dtbo.img \
-            --include_descriptors_from_image recovery.img \
-            --include_descriptors_from_image system.img
+            --include_descriptors_from_image recovery.img
 
       - name: Show vbmeta info
         run: |
@@ -233,7 +311,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: resigned-boot-only
+          name: resigned-boot-and-system
           path: |
             signed/boot.img
+            signed/system.img
             signed/vbmeta.img

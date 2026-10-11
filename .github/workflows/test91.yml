@@ -57,7 +57,7 @@ jobs:
             libsdl1.2-dev libwxgtk3.0-gtk3-dev libxml2 lzop pngcrush \
             schedtool squashfs-tools imagemagick libbz2-dev lzma ncftp \
             qemu-user-static libstdc++-10-dev libncurses5 python3 libtinfo5 \
-            openssl python2.7 python2.7-dev git wget xxd python3-cryptography zip curl \
+            openssl python2.7 python2.7-dev git wget xxd python3-cryptography zip curl unzip \
             python3-pycryptodome
 
       - name: Install OpenJDK
@@ -137,12 +137,20 @@ jobs:
       - name: Clone haha-you-used-testkeys (AOSP testkey)
         run: git clone https://github.com/alltechdev/haha-you-used-testkeys haha-tool
 
+      # ------------------------------------------------------------------
+      # 7z から zip に変更した部分（ダウンロード）
+      # ------------------------------------------------------------------
       - name: Download Neo.zip
-        run: wget -O test.zip https://github.com/coara-chocomaru/test-app/releases/download/test/test1.zip
+        run: wget -O Next-2.zip https://github.com/coara-chocomaru/monooki/releases/download/%E3%81%A7%E3%83%BC%E3%81%9F2/Next-2.zip
 
+      # ------------------------------------------------------------------
+      # 7z から zip に変更した部分（展開）
+      #   unzip でカレントディレクトリに展開（パスワード付きなら -P を追加）
+      #   パスワードが "ctz" の場合は: unzip -P ctz Next-2.zip -d .
+      # ------------------------------------------------------------------
       - name: Extract images
         run: |
-            7z x test.zip -pctz -o. -aoa -y
+            unzip -o Next-2.zip -d .
             ls -la *.img
 
       - name: Create working directories
@@ -203,7 +211,6 @@ jobs:
 
       # ------------------------------------------------------------------
       # boot.img への再署名
-      #   元の boot は Algorithm=NONE / sha256 / partition_size=33554432
       # ------------------------------------------------------------------
       - name: Sign boot.img => signed/boot.img (NONE / sha256 / 33554432)
         run: |
@@ -230,8 +237,6 @@ jobs:
 
       # ------------------------------------------------------------------
       # system.img への再署名
-      #   元の system は Algorithm=NONE / sha1 / fec_roots=2
-      #   partition_size=2684354560 で元と同一サイズに強制
       # ------------------------------------------------------------------
       - name: Sign system.img => signed/system.img (NONE / sha1 / fec 2 / 2684354560)
         run: |
@@ -264,12 +269,6 @@ jobs:
       - name: Show signed system info
         run: python avb/avbtool info_image --image signed/system.img
 
-      # ------------------------------------------------------------------
-      # vbmeta.img の再構築
-      #   元 vbmeta と同じく全 descriptor をインラインで格納する構成
-      #   - boot / system  : 署名済みイメージから descriptor を取り込む
-      #   - vendor/dtbo/recovery : 元イメージから descriptor を取り込む
-      # ------------------------------------------------------------------
       - name: Build vbmeta image (all descriptors inline)
         run: |
           cd $GITHUB_WORKSPACE

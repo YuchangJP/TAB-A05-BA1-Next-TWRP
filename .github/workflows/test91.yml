@@ -5,6 +5,7 @@ on:
     branches:
       - yoko  # 実行するブランチを指定
 
+
 env:
   MANIFEST_URL: 'https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni'
   MANIFEST_BRANCH: 'twrp-9.0'
@@ -14,7 +15,7 @@ env:
   DEVICE_NAME: 'a05ba'
   MAKEFILE_NAME: 'omni_a05ba'
   BUILD_TARGET: 'recovery'
-
+ 
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id

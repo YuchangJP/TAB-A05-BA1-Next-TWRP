@@ -138,17 +138,9 @@ jobs:
       - name: Clone haha-you-used-testkeys (AOSP testkey)
         run: git clone https://github.com/alltechdev/haha-you-used-testkeys haha-tool
 
-      # ------------------------------------------------------------------
-      # zip ダウンロード
-      # ------------------------------------------------------------------
       - name: Download Neo.zip
         run: wget -O Next-2.zip https://github.com/coara-chocomaru/test-app/releases/download/test/test1.zip
 
-      # ------------------------------------------------------------------
-      # zip 展開
-      #   パスワード付きの場合は -P ctz を付与:
-      #   unzip -P ctz -o Next-2.zip -d .
-      # ------------------------------------------------------------------
       - name: Extract images
         run: |
             unzip -o Next-2.zip -d .
@@ -158,10 +150,7 @@ jobs:
         run: mkdir -p signed keys
 
       # ============================================================
-      # ここから下が「署名と再構築」セクション
-      #   - boot.img   : NONE / sha256 / partition_size=33554432
-      #   - system.img : NONE / sha1  / fec_roots=2 / partition_size=2684354560
-      #   - vbmeta.img : SHA256_RSA2048 (AOSP testkey) で再構築
+      # 署名と再構築セクション
       # ============================================================
 
       - name: info boot
@@ -188,10 +177,20 @@ jobs:
         run: |
          python avb/avbtool info_image --image vbmeta.img
 
-      - name: Deploy vbmeta key (AOSP testkey)
+      # ------------------------------------------------------------------
+      # 【修正】vbmeta 用 testkey を AOSP testkey_rsa4096.pem に変更
+      #   元 vbmeta の Public key (sha1) = 2597c218aae470a130f61162feaae70afd97f011
+      #   これは AOSP testkey_rsa4096.pem の公開鍵 SHA1 と一致する。
+      # ------------------------------------------------------------------
+      - name: Deploy vbmeta key (AOSP testkey_rsa4096)
         run: |
-          cp haha-tool/keys/vbmeta.pem keys/vbmeta.pem
-          cp haha-tool/keys/vbmeta.pem keys/vbmeta.avbpubkey
+          ls -la haha-tool/keys/
+          cp haha-tool/keys/testkey_rsa4096.pem keys/vbmeta.pem
+          python avb/avbtool extract_public_key \
+            --key keys/vbmeta.pem \
+            --output keys/vbmeta.avbpubkey
+          echo "--- vbmeta public key sha1 ---"
+          sha1sum keys/vbmeta.avbpubkey || true
 
       - name: Install Python2 crypto libs
         run: |
@@ -271,9 +270,7 @@ jobs:
         run: python avb/avbtool info_image --image signed/system.img
 
       # ------------------------------------------------------------------
-      # 【修正箇所①】vendor / dtbo / recovery を signed/ にステージング
-      #   verify_image は vbmeta と同じディレクトリを image_dir として
-      #   各 descriptor の <partition>.img を探すため、ここで揃えておく。
+      # vendor / dtbo / recovery を signed/ にステージング
       # ------------------------------------------------------------------
       - name: Stage vendor / dtbo / recovery into signed/
         run: |
@@ -284,21 +281,24 @@ jobs:
           ls -la signed/
 
       # ------------------------------------------------------------------
-      # 【修正箇所②】vbmeta.img の再構築
-      #   descriptor はすべて signed/ 配下のイメージから取り込む
+      # 【修正】vbmeta.img の再構築
+      #   - descriptor 順序を元 vbmeta と完全一致:
+      #       vendor → dtbo → boot → recovery → system → cmdline×2
+      #   - algorithm を SHA256_RSA4096 に変更（元 vbmeta と一致）
+      #   - key は testkey_rsa4096.pem（元 vbmeta と同一）
       # ------------------------------------------------------------------
-      - name: Build vbmeta image (all descriptors inline)
+      - name: Build vbmeta image (RSA4096 / descriptor order matches original)
         run: |
           cd $GITHUB_WORKSPACE
           python $GITHUB_WORKSPACE/avb/avbtool make_vbmeta_image \
             --output signed/vbmeta.img \
             --key keys/vbmeta.pem \
-            --algorithm SHA256_RSA2048 \
-            --include_descriptors_from_image signed/boot.img \
-            --include_descriptors_from_image signed/system.img \
+            --algorithm SHA256_RSA4096 \
             --include_descriptors_from_image signed/vendor.img \
             --include_descriptors_from_image signed/dtbo.img \
-            --include_descriptors_from_image signed/recovery.img
+            --include_descriptors_from_image signed/boot.img \
+            --include_descriptors_from_image signed/recovery.img \
+            --include_descriptors_from_image signed/system.img
 
       - name: Show vbmeta info
         run: |
@@ -310,9 +310,6 @@ jobs:
         run: python3 nccgroup-avb/test_avb_key.py signed/vbmeta.img
         continue-on-error: true
 
-      # ------------------------------------------------------------------
-      # 検証: signed/ 内に全パーティションが揃っているので成功する
-      # ------------------------------------------------------------------
       - name: Explicit testkey verification
         run: |
           python avb/avbtool verify_image \

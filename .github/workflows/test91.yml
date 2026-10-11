@@ -1,5 +1,4 @@
 name: Replace-boot-and-system
-
 on:
   push:
     branches:

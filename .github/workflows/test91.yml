@@ -139,15 +139,15 @@ jobs:
         run: git clone https://github.com/alltechdev/haha-you-used-testkeys haha-tool
 
       # ------------------------------------------------------------------
-      # 7z から zip に変更した部分（ダウンロード）
+      # zip ダウンロード
       # ------------------------------------------------------------------
       - name: Download Neo.zip
         run: wget -O Next-2.zip https://github.com/coara-chocomaru/test-app/releases/download/test/test1.zip
 
       # ------------------------------------------------------------------
-      # 7z から zip に変更した部分（展開）
-      #   unzip でカレントディレクトリに展開（パスワード付きなら -P を追加）
-      #   パスワードが "ctz" の場合は: unzip -P ctz Next-2.zip -d .
+      # zip 展開
+      #   パスワード付きの場合は -P ctz を付与:
+      #   unzip -P ctz -o Next-2.zip -d .
       # ------------------------------------------------------------------
       - name: Extract images
         run: |
@@ -270,6 +270,23 @@ jobs:
       - name: Show signed system info
         run: python avb/avbtool info_image --image signed/system.img
 
+      # ------------------------------------------------------------------
+      # 【修正箇所①】vendor / dtbo / recovery を signed/ にステージング
+      #   verify_image は vbmeta と同じディレクトリを image_dir として
+      #   各 descriptor の <partition>.img を探すため、ここで揃えておく。
+      # ------------------------------------------------------------------
+      - name: Stage vendor / dtbo / recovery into signed/
+        run: |
+          cd $GITHUB_WORKSPACE
+          cp vendor.img   signed/vendor.img
+          cp dtbo.img     signed/dtbo.img
+          cp recovery.img signed/recovery.img
+          ls -la signed/
+
+      # ------------------------------------------------------------------
+      # 【修正箇所②】vbmeta.img の再構築
+      #   descriptor はすべて signed/ 配下のイメージから取り込む
+      # ------------------------------------------------------------------
       - name: Build vbmeta image (all descriptors inline)
         run: |
           cd $GITHUB_WORKSPACE
@@ -279,9 +296,9 @@ jobs:
             --algorithm SHA256_RSA2048 \
             --include_descriptors_from_image signed/boot.img \
             --include_descriptors_from_image signed/system.img \
-            --include_descriptors_from_image vendor.img \
-            --include_descriptors_from_image dtbo.img \
-            --include_descriptors_from_image recovery.img
+            --include_descriptors_from_image signed/vendor.img \
+            --include_descriptors_from_image signed/dtbo.img \
+            --include_descriptors_from_image signed/recovery.img
 
       - name: Show vbmeta info
         run: |
@@ -293,6 +310,9 @@ jobs:
         run: python3 nccgroup-avb/test_avb_key.py signed/vbmeta.img
         continue-on-error: true
 
+      # ------------------------------------------------------------------
+      # 検証: signed/ 内に全パーティションが揃っているので成功する
+      # ------------------------------------------------------------------
       - name: Explicit testkey verification
         run: |
           python avb/avbtool verify_image \

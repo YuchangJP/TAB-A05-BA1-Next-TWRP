@@ -1,4 +1,5 @@
 name: Replace-boot-and-system
+
 on:
   push:
     branches:
@@ -134,8 +135,10 @@ jobs:
       - name: Clone nccgroup test_avb_key
         run: git clone https://github.com/nccgroup/test_avb_key nccgroup-avb
 
-      - name: Clone haha-you-used-testkeys (AOSP testkey)
-        run: git clone https://github.com/alltechdev/haha-you-used-testkeys haha-tool
+      # ------------------------------------------------------------------
+      # haha-you-used-testkeys の clone は不要になったため削除。
+      # vbmeta 用の testkey_rsa4096.pem はリポジトリ内の keys/ から取得する。
+      # ------------------------------------------------------------------
 
       - name: Download Neo.zip
         run: wget -O Next-2.zip https://github.com/coara-chocomaru/test-app/releases/download/test/test1.zip
@@ -177,18 +180,29 @@ jobs:
          python avb/avbtool info_image --image vbmeta.img
 
       # ------------------------------------------------------------------
-      # 【修正】vbmeta 用 testkey を AOSP testkey_rsa4096.pem に変更
-      #   元 vbmeta の Public key (sha1) = 2597c218aae470a130f61162feaae70afd97f011
-      #   これは AOSP testkey_rsa4096.pem の公開鍵 SHA1 と一致する。
+      # リポジトリ内の keys/testkey_rsa4096.pem を vbmeta 用鍵として使用
+      #   Move files to workspace でファイルは
+      #     workspace/<DEVICE_PATH>/keys/testkey_rsa4096.pem
+      #   に移動されているため、まずそこを探し、
+      #   無ければ $GITHUB_WORKSPACE 全体を find で検索する。
       # ------------------------------------------------------------------
-      - name: Deploy vbmeta key (AOSP testkey_rsa4096)
+      - name: Deploy vbmeta key (testkey_rsa4096.pem from repository)
         run: |
-          ls -la haha-tool/keys/
-          cp haha-tool/keys/testkey_rsa4096.pem keys/vbmeta.pem
+          cd $GITHUB_WORKSPACE
+          KEY_SRC="$GITHUB_WORKSPACE/workspace/${{ env.DEVICE_PATH }}/keys/testkey_rsa4096.pem"
+          if [ ! -f "$KEY_SRC" ]; then
+            KEY_SRC=$(find "$GITHUB_WORKSPACE" -name testkey_rsa4096.pem -type f 2>/dev/null | head -n 1)
+          fi
+          echo "Using key: $KEY_SRC"
+          if [ -z "$KEY_SRC" ] || [ ! -f "$KEY_SRC" ]; then
+            echo "ERROR: testkey_rsa4096.pem not found anywhere in repository"
+            exit 1
+          fi
+          cp "$KEY_SRC" keys/vbmeta.pem
           python avb/avbtool extract_public_key \
             --key keys/vbmeta.pem \
             --output keys/vbmeta.avbpubkey
-          echo "--- vbmeta public key sha1 ---"
+          echo "--- vbmeta public key sha1 (expected: 2597c218aae470a130f61162feaae70afd97f011) ---"
           sha1sum keys/vbmeta.avbpubkey || true
 
       - name: Install Python2 crypto libs
@@ -280,11 +294,11 @@ jobs:
           ls -la signed/
 
       # ------------------------------------------------------------------
-      # 【修正】vbmeta.img の再構築
-      #   - descriptor 順序を元 vbmeta と完全一致:
-      #       vendor → dtbo → boot → recovery → system → cmdline×2
-      #   - algorithm を SHA256_RSA4096 に変更（元 vbmeta と一致）
-      #   - key は testkey_rsa4096.pem（元 vbmeta と同一）
+      # vbmeta.img の再構築
+      #   - descriptor 順序: vendor → dtbo → boot → recovery → system
+      #     （元 vbmeta と完全一致）
+      #   - algorithm: SHA256_RSA4096（元 vbmeta と一致）
+      #   - key: keys/vbmeta.pem (= リポジトリ内 testkey_rsa4096.pem)
       # ------------------------------------------------------------------
       - name: Build vbmeta image (RSA4096 / descriptor order matches original)
         run: |

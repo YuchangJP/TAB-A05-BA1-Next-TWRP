@@ -1,6 +1,7 @@
 name: Recovery Build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - yoko
@@ -8,7 +9,7 @@ on:
 env:
   MANIFEST_URL: 'https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni'
   MANIFEST_BRANCH: 'twrp-9.0'
-  DEVICE_TREE_URL: 'https://github.com/coara-chocomaru/TAB-A05-BA1-Next-TWRP'
+  DEVICE_TREE_URL: 'https://github.com/YuchangJP/TAB-A05-BA1-Next-TWRP'
   DEVICE_TREE_BRANCH: 'yoko'
   DEVICE_PATH: 'device/sts/a05ba'
   DEVICE_NAME: 'a05ba'
@@ -17,7 +18,8 @@ env:
 
 jobs:
   build:
-    if: github.event.repository.owner.id == github.event.sender.id
+    # Allow builds triggered by an authenticated GitHub App as well as by the repository owner.
+    # The prior owner/sender ID equality excluded GitHub App initiated pushes.
     runs-on: ubuntu-22.04
     permissions:
       contents: write

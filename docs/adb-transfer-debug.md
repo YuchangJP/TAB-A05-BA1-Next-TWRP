@@ -1,32 +1,37 @@
-# TAB-A05-BA1 recovery: debugging adb push/pull EOF
+# TAB-A05-BA1 TWRP: adb transfer EOF
 
-Compared against the stock `recovery` ramdisk, which uses `musb-hdrc`
-for the USB device controller. The TWRP ramdisk previously used
-`11201000.usb`, had overlapping gadget-binding property triggers,
-and restarted adbd during boot.
+## Experimental baseline (2026-11-15)
 
-Changes:
-- Match the stock `musb-hdrc` UDC and controller mode
-- Set `sys.usb.ffs.aio_compat=1` **before** starting Android 9 adbd to
-  select synchronous FunctionFS read/write
-- Remove overlapping generic USB gadget binding and legacy adbd restart
-- Unbind before rebuilding the ADB and MTP USB function links
+A previous USB initialization change (commit `0879fe9`) prevented
+USB enumeration on a real device despite a successful Actions build.
+That approach simultaneously changed the UDC name, removed init/adbd
+triggers, and modified gadget bind/unbind sequencing. It has been
+**reverted**, including changes based on comparisons with stock recovery.
 
-These are candidate fixes; EOF has **not yet been tested on hardware**.
-Keep a copy of the stock recovery for rollback.
+We now keep the previously enumerating TWRP USB gadget logic, including
+`11201000.usb` and the original adbd lifecycle, and test only
+`sys.usb.ffs.aio_compat=1` in the `on fs` action. Android 9 adbd
+uses this property to select synchronous FunctionFS reads/writes.
+This may improve adb push/pull EOF, but is **not hardware-verified**.
 
-## Reproduction / verification
+## Verification (test before flashing permanently)
+
+- USB enumeration on the host: `lsusb` / Windows Device Manager
+- `adb devices`, `adb shell getprop sys.usb.ffs.aio_compat`
+- Run repeated `adb pull` / `adb push` with MTP on and off
 
 ```sh
-adb shell 'ls /sys/class/udc; getprop sys.usb.controller; getprop sys.usb.ffs.aio_compat; getprop sys.usb.config; getprop init.svc.adbd'
 adb shell 'dd if=/dev/zero of=/tmp/adb-test.bin bs=1048576 count=32'
 adb pull /tmp/adb-test.bin
 adb push /tmp/adb-test.bin /tmp/adb-test-pushed.bin
 adb shell 'sha256sum /tmp/adb-test.bin /tmp/adb-test-pushed.bin'
-adb shell 'dmesg | grep -Ei "usb|musb|ffs|gadget|disconnect|reset|aio|error"'
 ```
 
-Repeat multiple times, with MTP enabled and disabled, and also try
-`/data` as the target to separate storage problems from USB problems.
-If the new image does not enumerate, inspect logs and revert the UDC
-change first. The synchronous-I/O option is experimental on this device.
+If USB is still completely unrecognized, revert the single
+`aio_compat` line and confirm the original TWRP image enumerates.
+Before further changes collect the host-side USB descriptors
+(`lsusb` / Device Manager) and device console/dmesg if available.
+
+Stock recovery's configfs UDC string `musb-hdrc` does not establish
+that it is valid in this separately built TWRP environment; do not
+change it again without checking `/sys/class/udc` in the running kernel.
